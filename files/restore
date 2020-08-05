@@ -1,0 +1,70 @@
+#!/bin/bash -x
+
+source settings
+
+if [ -z "${S3_RESTORE_FILENAME}" ]; then
+    printf "%s\n" "${red}ERROR: The environment variable S3_RESTORE_FILENAME is not set.${end}"
+    exit 1
+fi
+
+if [ "${MYSQL_EXIT_SUCCESS_IF_DB_EXISTS}" = true ]; then
+    mysql ${MYSQL_OPTS} -e "USE ${MYSQL_DATABASE}"
+    if [ $? == 0 ]; then
+        # Database already exists and we've access to exit
+        printf "Database ${MYSQL_DATABASE} exists and MYSQL_EXIT_SUCCESS_IF_DB_EXISTS is true\n"
+        exit 0
+    fi
+fi
+
+if [ "${MYSQL_ALLOW_DB_OVERWRITE}" = false ]; then
+
+    if [ "${MYSQL_DROP_DB_IF_EXISTS}" = false ]; then
+        mysql ${MYSQL_OPTS} -e "USE ${MYSQL_DATABASE}"
+        if [ $? == 0 ]; then
+            # Database already exists and we haven't asked to drop it...so exit
+            printf "%s\n" "${red}ERROR: Database ${MYSQL_DATABASE} already exists and MYSQL_DROP_DB_IF_EXISTS is false.${end}"
+            exit 1
+        fi
+    fi
+fi
+
+printf "Checking S3 restore-file '${S3_RESTORE_PATH}' exists..."
+s3cmd ${S3_CMD_OPTS} ls ${S3_RESTORE_PATH} >/dev/null || exit 1
+printf "%s\n" "${green}OK${end}"
+
+cd ${WORK_DIR}
+
+printf "Fetching file ${S3_RESTORE_PATH}..."
+s3cmd ${S3_CMD_OPTS} get ${S3_RESTORE_PATH} > /dev/null
+printf "%s\n" "${green}OK${end}"
+
+file="${S3_RESTORE_PATH##*/}"
+
+if [[ $file =~ \.zip$ ]]; then
+    printf "Looks to be zipped - uncompressing..."
+    unzip -o $file || exit 1    
+#   file=${file%.*}
+    file=ualaloans.sql
+    printf "%s\n" "${green}OK${end}"
+fi
+
+if [ "$MYSQL_DROP_DB_IF_EXISTS" = true ]; then
+printf "Dropping database ${MYSQL_DATABASE}..."
+mysql ${MYSQL_OPTS} -e "DROP DATABASE IF EXISTS ${MYSQL_DATABASE}" >/dev/null || exit 1
+printf "%s\n" "${green}OK${end}"
+fi
+
+printf "Creating database ${MYSQL_DATABASE}..."
+mysql ${MYSQL_OPTS} -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE}" >/dev/null || exit 1
+printf "%s\n" "${green}OK${end}"
+
+printf "Restoring database ${MYSQL_DATABASE}..."
+mysql ${MYSQL_OPTS} ${MYSQL_DATABASE} >/dev/null < ${file} || exit 1
+printf "%s\n" "${green}OK${end}"
+
+
+printf "Deleting downloaded restore file ${file}..."
+rm $file
+printf "%s\n" "${green}OK${end}"
+
+printf "\n%s\n" "${blue}Done!${end}"

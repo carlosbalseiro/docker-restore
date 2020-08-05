@@ -1,0 +1,31 @@
+#!/bin/bash
+
+source settings
+
+mysql ${MYSQL_OPTS} -e "USE ${MYSQL_DATABASE}"
+if [ $? != 0 ]; then
+    printf "%s\n" "${red}ERROR: Database ${MYSQL_DATABASE} does not exist.${end}"
+    exit 1
+fi
+
+cd ${WORK_DIR}
+
+output_file="${MYSQL_DATABASE}-$(date "+%Y%m%d%H%M%S").sql"
+printf "Creating backup of database '${MYSQL_DATABASE}'..."
+mysqldump --opt ${MYSQL_OPTS} ${MYSQL_DATABASE} > $output_file
+printf "%s\n" "${green}OK${end}"
+
+printf "Compressing..."
+gzip $output_file || exit 1
+output_file="${output_file}.gz"
+printf "%s\n" "${green}OK${end}"
+
+printf "Storing file ${output_file}..."
+s3cmd ${S3_CMD_OPTS} put ${output_file} ${S3_BACKUP_BUCKET} > /dev/null
+printf "%s\n" "${green}OK${end}"
+
+printf "Deleting dumpfile ${output_file}..."
+rm $output_file
+printf "%s\n" "${green}OK${end}"
+
+printf "\n%s\n" "${blue}Done!${end}"
